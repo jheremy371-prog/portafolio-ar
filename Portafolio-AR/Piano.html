@@ -1,0 +1,597 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sintetizador Sheikah - Lector MIDI</title>
+    
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tonejs/midi"></script>
+
+    <style>
+        :root {
+            --triforce-gold: #fbbf24;
+            --sheikah-blue: #38bdf8;
+            --bg-color: #020617;
+            --record-red: #ef4444;
+            --midi-purple: #c084fc;
+        }
+
+        body {
+            margin: 0;
+            background-color: var(--bg-color);
+            color: white;
+            font-family: 'Courier New', Courier, monospace;
+            overflow: hidden;
+            height: 100vh;
+            user-select: none; 
+            -webkit-user-select: none;
+        }
+
+        #overlay, #calibration-screen {
+            position: absolute;
+            inset: 0;
+            background: radial-gradient(circle, rgba(15,23,42,0.95) 0%, rgba(2,6,23,1) 100%);
+            z-index: 100;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            transition: opacity 0.5s;
+        }
+        #calibration-screen { z-index: 90; display: none; }
+
+        h1 {
+            color: var(--triforce-gold);
+            font-size: 2.5rem;
+            letter-spacing: 4px;
+            text-transform: uppercase;
+            text-shadow: 0 0 20px rgba(251, 191, 36, 0.5);
+            margin-bottom: 10px;
+        }
+
+        button {
+            margin-top: 30px;
+            padding: 15px 40px;
+            font-size: 1.2rem;
+            font-weight: bold;
+            background: transparent;
+            color: var(--sheikah-blue);
+            border: 2px solid var(--sheikah-blue);
+            border-radius: 4px;
+            cursor: pointer;
+            box-shadow: 0 0 15px rgba(56, 189, 248, 0.3);
+            transition: all 0.3s ease;
+            text-transform: uppercase;
+        }
+        button:hover { background: var(--sheikah-blue); color: var(--bg-color); }
+
+        .hud-top {
+            position: absolute;
+            top: 20px;
+            width: 100%;
+            display: flex;
+            justify-content: space-between;
+            padding: 0 50px;
+            box-sizing: border-box;
+            z-index: 20;
+            pointer-events: none;
+        }
+
+        .hud-panel {
+            background: rgba(15, 23, 42, 0.6);
+            border: 1px solid rgba(56, 189, 248, 0.3);
+            padding: 10px 20px;
+            border-radius: 10px;
+            backdrop-filter: blur(5px);
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            pointer-events: auto;
+        }
+
+        .hud-btn {
+            background: rgba(56, 189, 248, 0.1);
+            border: 1px solid var(--sheikah-blue);
+            color: var(--sheikah-blue);
+            padding: 5px 15px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 0;
+            font-size: 0.9rem;
+            text-transform: uppercase;
+        }
+
+        /* Botón especial para MIDI */
+        .midi-btn {
+            background: rgba(192, 132, 252, 0.1);
+            border-color: var(--midi-purple);
+            color: var(--midi-purple);
+        }
+        
+        #record-indicator {
+            width: 15px; height: 15px;
+            border-radius: 50%;
+            background: #333;
+            box-shadow: 0 0 10px transparent;
+        }
+        #record-indicator.recording {
+            background: var(--record-red);
+            box-shadow: 0 0 15px var(--record-red);
+            animation: pulse 1s infinite;
+        }
+        @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
+
+        .ui-container {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: flex-end; 
+            padding-bottom: 40px;
+            z-index: 10;
+            pointer-events: none;
+        }
+
+        .harp-container {
+            width: 80%; 
+            max-width: 900px;
+            height: 40%; 
+            background: rgba(15, 23, 42, 0.4);
+            backdrop-filter: blur(8px);
+            border: 2px solid rgba(56, 189, 248, 0.2);
+            border-radius: 20px;
+            display: flex;
+            padding: 15px;
+            box-sizing: border-box;
+            pointer-events: auto;
+        }
+
+        .string {
+            flex: 1;
+            position: relative;
+            display: flex;
+            flex-direction: column;
+            justify-content: center; 
+            align-items: center;
+            transition: all 0.1s ease-out;
+            border-radius: 12px;
+            margin: 0 4px;
+            background: rgba(255, 255, 255, 0.02);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            touch-action: none;
+            cursor: pointer;
+        }
+
+        .key-number { font-size: 1.8rem; font-weight: bold; color: rgba(56, 189, 248, 0.3); pointer-events: none; transition: 0.1s;}
+        .note-label { color: rgba(255,255,255,0.2); font-weight: bold; pointer-events: none; transition: 0.1s;}
+
+        .string.hovered { background: rgba(56, 189, 248, 0.1); border-color: rgba(56, 189, 248, 0.4); }
+        .string.hovered .key-number { color: var(--sheikah-blue); transform: scale(1.1); }
+        
+        .string.active { background: rgba(251, 191, 36, 0.2); border-color: var(--triforce-gold); }
+        .string.active .key-number { color: var(--triforce-gold); transform: scale(1.3) translateY(-5px); }
+        .string.active .note-label { color: var(--triforce-gold); }
+
+        /* Color para cuando la máquina (MIDI) toca la nota sola */
+        .string.auto-playing { background: rgba(192, 132, 252, 0.2); border-color: var(--midi-purple); box-shadow: 0 0 20px var(--midi-purple); }
+        .string.auto-playing .key-number { color: var(--midi-purple); transform: scale(1.3) translateY(-5px); }
+
+        video { display: none; }
+        #fft-canvas { position: absolute; inset: 0; width: 100vw; height: 100vh; z-index: 1; opacity: 0.5; }
+        #camera-canvas { position: absolute; inset: 0; width: 100vw; height: 100vh; z-index: 5; transform: scaleX(-1); pointer-events: none; opacity: 0.3; filter: grayscale(100%) contrast(1.2); }
+        #particles-canvas { position: absolute; inset: 0; width: 100vw; height: 100vh; z-index: 15; pointer-events: none; }
+        
+        .progress-bar { width: 300px; height: 10px; background: #333; border-radius: 5px; margin-top: 20px; overflow: hidden; }
+        .progress-fill { width: 0%; height: 100%; background: var(--sheikah-blue); transition: width 0.1s; }
+    </style>
+</head>
+<body>
+
+    <div id="overlay">
+        <h1>Santuario del Tiempo</h1>
+        <p style="color: #94a3b8;">Sistema de Secuenciación MIDI</p>
+        <button id="start-btn">Inicializar Motores</button>
+    </div>
+
+    <div id="calibration-screen">
+        <h2 style="color: var(--sheikah-blue);">Calibración de Profundidad</h2>
+        <p>Abre tu mano y ponla frente a la cámara a la distancia donde quieras tocar.</p>
+        <div class="progress-bar"><div class="progress-fill" id="calib-progress"></div></div>
+        <p id="calib-text" style="color: var(--triforce-gold); margin-top: 15px;">Esperando mano...</p>
+    </div>
+
+    <div class="hud-top">
+        <div class="hud-panel">
+            <div id="record-indicator"></div>
+            <button class="hud-btn" id="btn-rec">Grabar Loop</button>
+            <button class="hud-btn" id="btn-play">Reproducir</button>
+            <button class="hud-btn" id="btn-clear">Limpiar</button>
+        </div>
+        
+        <div class="hud-panel">
+            <label class="hud-btn midi-btn" for="midi-upload" id="lbl-midi">Cargar MIDI (.mid)</label>
+            <input type="file" id="midi-upload" accept=".mid,.midi" style="display:none;">
+            <button class="hud-btn midi-btn" id="btn-stop-midi" style="display:none;">Detener Pista</button>
+        </div>
+
+        <div class="hud-panel">
+            <span style="color: var(--sheikah-blue); font-weight: bold;">OCTAVA</span>
+            <button class="hud-btn" id="btn-oct-down">-</button>
+            <span id="octave-display" style="font-size: 1.2rem;">4</span>
+            <button class="hud-btn" id="btn-oct-up">+</button>
+        </div>
+    </div>
+
+    <div class="ui-container">
+        <div class="harp-container" id="harp"></div>
+    </div>
+
+    <canvas id="fft-canvas"></canvas>
+    <video id="video" autoplay playsinline></video>
+    <canvas id="camera-canvas"></canvas>
+    <canvas id="particles-canvas"></canvas>
+
+    <script>
+        const videoElement = document.getElementById('video');
+        const cameraCanvas = document.getElementById('camera-canvas');
+        const cameraCtx = cameraCanvas.getContext('2d');
+        const fftCanvas = document.getElementById('fft-canvas');
+        const fftCtx = fftCanvas.getContext('2d');
+        const particlesCanvas = document.getElementById('particles-canvas');
+        const partCtx = particlesCanvas.getContext('2d');
+        const harpContainer = document.getElementById('harp');
+        
+        function resizeCanvases() {
+            cameraCanvas.width = fftCanvas.width = particlesCanvas.width = window.innerWidth;
+            cameraCanvas.height = fftCanvas.height = particlesCanvas.height = window.innerHeight;
+        }
+        window.addEventListener('resize', resizeCanvases);
+        resizeCanvases();
+
+        let synth, filter, reverb, fft;
+        let baseOctave = 4;
+        const notasBase = ["D", "E", "F", "G", "A", "B", "C", "D"];
+        let notasActuales = [];
+
+        function updateScale() {
+            notasActuales = notasBase.map((nota, i) => {
+                const oct = (i >= 6) ? baseOctave + 1 : baseOctave;
+                return `${nota}${oct}`;
+            });
+            document.querySelectorAll('.note-label').forEach((el, i) => { el.innerText = notasActuales[i]; });
+            document.getElementById('octave-display').innerText = baseOctave;
+        }
+
+        const STATE = { INIT: 0, CALIBRATING: 1, PLAYING: 2 };
+        let currentState = STATE.INIT;
+        let dynamicHandThreshold = 0.12; 
+        let pinchState = { 'Left': false, 'Right': false };
+        let prevPinchDist = { 'Left': 1, 'Right': 1 }; 
+
+        let isRecording = false, isPlayingLoop = false, loopStartTime = 0;
+        let loopEvents = [], loopTimeouts = []; 
+
+        for(let i=0; i<8; i++) {
+            const strDiv = document.createElement('div');
+            strDiv.className = 'string';
+            strDiv.dataset.index = i;
+            strDiv.innerHTML = `<div class="key-number">${i + 1}</div><div class="note-label"></div>`;
+            
+            strDiv.addEventListener('pointerdown', (e) => {
+                e.preventDefault();
+                if (currentState === STATE.PLAYING && Tone.context.state === 'running') {
+                    triggerNote(i, 0.8, 0.5); 
+                }
+            });
+            harpContainer.appendChild(strDiv);
+        }
+        const strings = document.querySelectorAll('.string');
+        updateScale();
+
+        document.getElementById('start-btn').addEventListener('click', async () => {
+            await Tone.start(); 
+            
+            filter = new Tone.Filter(2000, "lowpass").toDestination();
+            reverb = new Tone.Reverb({ decay: 4, wet: 0.5 }).connect(filter);
+            synth = new Tone.PolySynth(Tone.Synth, {
+                oscillator: { type: "triangle" }, 
+                envelope: { attack: 0.02, decay: 0.3, sustain: 0.4, release: 1.5 }
+            }).connect(reverb);
+            
+            fft = new Tone.FFT(64); 
+            filter.connect(fft);
+
+            document.getElementById('overlay').style.display = 'none';
+            document.getElementById('calibration-screen').style.display = 'flex';
+            
+            iniciarCamara();
+            drawVisualizers(); 
+            currentState = STATE.CALIBRATING;
+        });
+
+        // --- SISTEMA DE IMPORTACIÓN MIDI ---
+        const midiUpload = document.getElementById('midi-upload');
+        const btnStopMidi = document.getElementById('btn-stop-midi');
+        const lblMidi = document.getElementById('lbl-midi');
+
+        midiUpload.addEventListener('change', async (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            // Leer el archivo como un ArrayBuffer estructurado
+            const reader = new FileReader();
+            reader.onload = async function(event) {
+                try {
+                    // Parsea el archivo MIDI con la librería de Tone.js
+                    const midi = new Midi(event.target.result);
+                    
+                    // Detener cualquier reproducción anterior
+                    Tone.Transport.stop();
+                    Tone.Transport.cancel();
+                    
+                    // Modificamos UI
+                    lblMidi.innerText = "Cargado: " + (midi.name || "Pista MIDI");
+                    btnStopMidi.style.display = "inline-block";
+
+                    // Recorremos todas las pistas y notas del archivo MIDI
+                    midi.tracks.forEach(track => {
+                        track.notes.forEach(note => {
+                            // Programar la nota en la línea de tiempo de Tone.js
+                            Tone.Transport.schedule(time => {
+                                
+                                // 1. Tocar el Audio (La IA usa la nota exacta del MIDI sin importar la octava)
+                                synth.triggerAttackRelease(note.name, note.duration, time, note.velocity);
+
+                                // 2. Sincronizar el componente Visual (Dibujo en pantalla)
+                                Tone.Draw.schedule(() => {
+                                    // Comprobar si la nota del MIDI coincide con nuestras 8 teclas actuales
+                                    const keyIndex = notasActuales.indexOf(note.name);
+                                    
+                                    if (keyIndex !== -1) {
+                                        // La nota está en nuestro piano, iluminamos la tecla exacta
+                                        triggerAutoVisual(keyIndex);
+                                    } else {
+                                        // La nota está fuera de nuestra octava, iluminamos una tecla 
+                                        // matemáticamente relacionada usando Modulo 8 para el show visual
+                                        triggerAutoVisual(note.midi % 8);
+                                    }
+                                }, time);
+
+                            }, note.time);
+                        });
+                    });
+
+                    // Iniciar la reproducción del motor de transporte
+                    Tone.Transport.start();
+
+                } catch (error) {
+                    console.error("Error al leer el archivo MIDI:", error);
+                    alert("Por favor, asegúrate de subir un archivo .mid o .midi válido.");
+                }
+            };
+            reader.readAsArrayBuffer(file);
+        });
+
+        btnStopMidi.addEventListener('click', () => {
+            Tone.Transport.stop();
+            Tone.Transport.cancel(); // Limpia la agenda de notas
+            lblMidi.innerText = "Cargar MIDI (.mid)";
+            btnStopMidi.style.display = "none";
+            midiUpload.value = ''; // Resetear el input file
+        });
+
+        // --- SISTEMA DE VISUALES AUTOMÁTICOS ---
+        function triggerAutoVisual(index) {
+            const targetString = strings[index];
+            targetString.classList.add('auto-playing');
+            // Genera partículas de un color diferente (Morado) para indicar que es la máquina tocando
+            spawnParticles(
+                targetString.getBoundingClientRect().left + 40, 
+                targetString.getBoundingClientRect().top + 100, 
+                "#c084fc"
+            );
+            setTimeout(() => targetString.classList.remove('auto-playing'), 200);
+        }
+
+        // Resto de controles UI y Looper original...
+        document.getElementById('btn-oct-up').onclick = () => { if(baseOctave < 6) { baseOctave++; updateScale(); }};
+        document.getElementById('btn-oct-down').onclick = () => { if(baseOctave > 2) { baseOctave--; updateScale(); }};
+        
+        document.getElementById('btn-rec').onclick = () => {
+            isRecording = !isRecording;
+            const ind = document.getElementById('record-indicator');
+            if (isRecording) {
+                ind.classList.add('recording');
+                document.getElementById('btn-rec').innerText = "Parar";
+                loopEvents = []; loopStartTime = Tone.now();
+            } else {
+                ind.classList.remove('recording');
+                document.getElementById('btn-rec').innerText = "Grabar Loop";
+            }
+        };
+
+        document.getElementById('btn-play').onclick = () => {
+            if (loopEvents.length === 0) return;
+            isPlayingLoop = !isPlayingLoop;
+            if (isPlayingLoop) {
+                document.getElementById('btn-play').innerText = "Pausar";
+                playLoopSequence();
+            } else {
+                document.getElementById('btn-play').innerText = "Reproducir";
+                stopLoopSequence();
+            }
+        };
+
+        document.getElementById('btn-clear').onclick = () => {
+            loopEvents = []; stopLoopSequence();
+            document.getElementById('btn-play').innerText = "Reproducir";
+            isPlayingLoop = false;
+        };
+
+        function playLoopSequence() {
+            if (!isPlayingLoop) return;
+            let maxTime = 0;
+            loopEvents.forEach(evt => {
+                if (evt.offset > maxTime) maxTime = evt.offset;
+                const tid = setTimeout(() => { triggerNote(evt.index, evt.velocity, 0.5, true); }, evt.offset * 1000);
+                loopTimeouts.push(tid);
+            });
+            loopTimeouts.push(setTimeout(playLoopSequence, (maxTime * 1000) + 1000));
+        }
+
+        function stopLoopSequence() { loopTimeouts.forEach(clearTimeout); loopTimeouts = []; }
+
+        let particles = [];
+        function spawnParticles(x, y, color) {
+            for (let i = 0; i < 15; i++) {
+                particles.push({
+                    x: x, y: y,
+                    vx: (Math.random() - 0.5) * 10, vy: (Math.random() - 0.5) * 10 - 2, 
+                    life: 1.0, color: color
+                });
+            }
+        }
+
+        function drawVisualizers() {
+            requestAnimationFrame(drawVisualizers);
+
+            fftCtx.clearRect(0, 0, fftCanvas.width, fftCanvas.height);
+            if (Tone.context.state === 'running') {
+                const values = fft.getValue();
+                fftCtx.beginPath();
+                fftCtx.moveTo(0, fftCanvas.height);
+                for (let i = 0; i < values.length; i++) {
+                    const x = (i / values.length) * fftCanvas.width;
+                    const y = (1 - (values[i] + 140) / 140) * fftCanvas.height;
+                    fftCtx.lineTo(x, y);
+                }
+                fftCtx.lineTo(fftCanvas.width, fftCanvas.height);
+                fftCtx.fillStyle = "rgba(56, 189, 248, 0.1)";
+                fftCtx.fill();
+            }
+
+            partCtx.clearRect(0, 0, particlesCanvas.width, particlesCanvas.height);
+            for (let i = particles.length - 1; i >= 0; i--) {
+                let p = particles[i];
+                p.x += p.vx; p.y += p.vy; p.vy += 0.4; p.life -= 0.02;
+
+                if (p.life <= 0) particles.splice(i, 1);
+                else {
+                    partCtx.beginPath();
+                    partCtx.arc(p.x, p.y, p.life * 5, 0, Math.PI * 2);
+                    partCtx.fillStyle = p.color;
+                    partCtx.globalAlpha = p.life;
+                    partCtx.fill();
+                }
+            }
+            partCtx.globalAlpha = 1.0;
+        }
+
+        let calibFrames = 0, calibSum = 0;
+        const CALIB_MAX = 50; 
+        const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
+        hands.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.7, minTrackingConfidence: 0.7 });
+        hands.onResults(onResults);
+
+        function onResults(results) {
+            cameraCtx.clearRect(0, 0, cameraCanvas.width, cameraCanvas.height);
+            if(results.image) cameraCtx.drawImage(results.image, 0, 0, cameraCanvas.width, cameraCanvas.height);
+
+            if (currentState === STATE.CALIBRATING) {
+                if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                    const landmarks = results.multiHandLandmarks[0];
+                    const w = Math.hypot(landmarks[17].x - landmarks[5].x, landmarks[17].y - landmarks[5].y);
+                    calibSum += w; calibFrames++;
+                    
+                    document.getElementById('calib-progress').style.width = `${(calibFrames/CALIB_MAX)*100}%`;
+                    drawConnectors(cameraCtx, landmarks, HAND_CONNECTIONS, {color: '#fbbf24', lineWidth: 2});
+
+                    if (calibFrames >= CALIB_MAX) {
+                        dynamicHandThreshold = (calibSum / CALIB_MAX) * 0.75; 
+                        document.getElementById('calibration-screen').style.display = 'none';
+                        currentState = STATE.PLAYING;
+                    }
+                } else document.getElementById('calib-text').innerText = "No se detecta mano, colócala frente a la cámara.";
+                return;
+            }
+
+            let hoveredStrings = new Set();
+            const harpRect = harpContainer.getBoundingClientRect();
+
+            if (results.multiHandLandmarks) {
+                results.multiHandLandmarks.forEach((landmarks, index) => {
+                    const handLabel = results.multiHandedness[index].label; 
+                    
+                    const handWidth = Math.hypot(landmarks[17].x - landmarks[5].x, landmarks[17].y - landmarks[5].y);
+                    if (handWidth < dynamicHandThreshold) return; 
+
+                    drawConnectors(cameraCtx, landmarks, HAND_CONNECTIONS, {color: 'rgba(56, 189, 248, 0.4)', lineWidth: 2});
+
+                    const thumbTip = landmarks[4]; const indexTip = landmarks[8];
+                    const currentPinchDist = Math.hypot(indexTip.x - thumbTip.x, indexTip.y - thumbTip.y);
+                    const isPinching = currentPinchDist < 0.045;
+                    const pinchSpeed = prevPinchDist[handLabel] - currentPinchDist; 
+                    
+                    let xPixels = (1 - indexTip.x) * window.innerWidth;
+                    let yPixels = indexTip.y * window.innerHeight;
+
+                    const filterFreq = 500 + ((1 - indexTip.y) * 4500);
+                    filter.frequency.rampTo(filterFreq, 0.1);
+
+                    if (xPixels >= harpRect.left && xPixels <= harpRect.right && yPixels >= harpRect.top && yPixels <= harpRect.bottom) {
+                        const stringWidth = harpRect.width / 8; 
+                        const boxIndex = Math.floor((xPixels - harpRect.left) / stringWidth);
+
+                        if (boxIndex >= 0 && boxIndex < 8) {
+                            hoveredStrings.add(boxIndex);
+
+                            if (isPinching && !pinchState[handLabel]) {
+                                let velocity = Math.min(Math.max(pinchSpeed * 10, 0.3), 1.0); 
+                                triggerNote(boxIndex, velocity, indexTip.y);
+                                spawnParticles(window.innerWidth - (indexTip.x * window.innerWidth), indexTip.y * window.innerHeight, "#fbbf24");
+                            }
+                        }
+                    }
+
+                    pinchState[handLabel] = isPinching;
+                    prevPinchDist[handLabel] = currentPinchDist;
+                });
+            } else {
+                pinchState = { 'Left': false, 'Right': false };
+            }
+
+            strings.forEach((str, i) => {
+                if (hoveredStrings.has(i)) str.classList.add('hovered');
+                else str.classList.remove('hovered');
+            });
+        }
+
+        function triggerNote(index, velocity, yPos, isGhost = false) {
+            const nota = notasActuales[index];
+            synth.triggerAttackRelease(nota, "8n", undefined, velocity);
+            
+            strings[index].classList.add('active');
+            setTimeout(() => strings[index].classList.remove('active'), 150);
+
+            if (isRecording && !isGhost) {
+                loopEvents.push({ index: index, velocity: velocity, offset: Tone.now() - loopStartTime });
+            }
+        }
+
+        function iniciarCamara() {
+            const camera = new Camera(videoElement, {
+                onFrame: async () => { await hands.send({image: videoElement}); },
+                width: 1280, height: 720
+            });
+            camera.start();
+        }
+    </script>
+</body>
+</html>
