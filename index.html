@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hub Interactio - OS</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;500;700;900&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --primary: #00ff88;
+            --secondary: #00c3e3;
+            --bg-dark: #0f172a;
+            --glass-bg: rgba(255, 255, 255, 0.03);
+            --glass-border: rgba(255, 255, 255, 0.08);
+            --text-main: #f8fafc;
+            --text-muted: #94a3b8;
+        }
+
+        body {
+            margin: 0; padding: 0;
+            background: linear-gradient(-45deg, #0f172a, #1e1b4b, #020617, #0f172a);
+            background-size: 400% 400%;
+            animation: gradientBG 15s ease infinite;
+            color: var(--text-main);
+            font-family: 'Inter', sans-serif;
+            overflow: hidden;
+            height: 100vh;
+            user-select: none;
+            display: flex; flex-direction: column;
+        }
+
+        @keyframes gradientBG {
+            0% { background-position: 0% 50%; }
+            50% { background-position: 100% 50%; }
+            100% { background-position: 0% 50%; }
+        }
+
+        /* --- SPLASH SCREEN --- */
+        #splash-screen {
+            position: fixed; inset: 0; z-index: 100;
+            background: #020617; display: flex; flex-direction: column;
+            justify-content: center; align-items: center;
+            transition: opacity 0.5s ease, visibility 0.5s;
+        }
+        .pulse-text {
+            font-size: 1.2rem; font-weight: 500; color: var(--primary);
+            letter-spacing: 4px; text-transform: uppercase;
+            animation: pulse 2s infinite; cursor: pointer;
+            padding: 20px; border: 1px solid rgba(0, 255, 136, 0.3);
+            border-radius: 8px; background: rgba(0, 255, 136, 0.05);
+        }
+        @keyframes pulse {
+            0% { opacity: 0.6; box-shadow: 0 0 0 0 rgba(0,255,136, 0.4); }
+            50% { opacity: 1; box-shadow: 0 0 20px 10px rgba(0,255,136, 0); }
+            100% { opacity: 0.6; box-shadow: 0 0 0 0 rgba(0,255,136, 0); }
+        }
+
+        /* --- HEADER (System Tray) --- */
+        header {
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 25px 50px; z-index: 10;
+        }
+        .sys-tray-left { display: flex; align-items: center; gap: 15px; }
+        .avatar-ring {
+            width: 45px; height: 45px; border-radius: 50%;
+            background: conic-gradient(from 0deg, var(--primary), var(--secondary), var(--primary));
+            display: flex; justify-content: center; align-items: center;
+            box-shadow: 0 0 15px rgba(0, 195, 227, 0.3);
+        }
+        .avatar-inner {
+            width: 39px; height: 39px; background: #1e293b;
+            border-radius: 50%; display: flex; justify-content: center; align-items: center;
+            font-size: 20px;
+        }
+        .sys-title { font-weight: 700; font-size: 1.1rem; letter-spacing: 1px;}
+        
+        .sys-tray-right { display: flex; align-items: center; gap: 20px; font-weight: 500; color: var(--text-muted); }
+        .sys-icons { font-size: 1.2rem; display: flex; gap: 15px; }
+
+        /* --- MAIN VIEWPORT --- */
+        main {
+            flex: 1; display: flex; flex-direction: column;
+            justify-content: center; padding-bottom: 20px;
+        }
+
+        .meta-info { text-align: center; margin-bottom: 40px; height: 80px; }
+        #app-title { font-size: 3rem; font-weight: 900; margin: 0; letter-spacing: -1px; text-shadow: 0 10px 20px rgba(0,0,0,0.5); }
+        #app-desc { color: var(--primary); font-size: 1.1rem; font-weight: 500; margin-top: 8px; letter-spacing: 1px; text-transform: uppercase;}
+
+        .carousel {
+            display: flex; gap: 30px; padding: 40px 50vw 40px 50px;
+            overflow-x: auto; scroll-behavior: smooth; align-items: center;
+            -ms-overflow-style: none; scrollbar-width: none;
+        }
+        .carousel::-webkit-scrollbar { display: none; }
+
+        /* --- CARDS (Glassmorphism) --- */
+        .card {
+            min-width: 280px; height: 280px; border-radius: 20px;
+            background: var(--glass-bg); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+            border: 1px solid var(--glass-border);
+            display: flex; justify-content: center; align-items: center;
+            font-size: 6rem; text-decoration: none; color: white;
+            position: relative; flex-shrink: 0;
+            transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            box-shadow: 0 15px 35px rgba(0,0,0,0.4), inset 0 0 0 1px rgba(255,255,255,0.05);
+        }
+
+        .card::after {
+            content: ''; position: absolute; inset: 0; border-radius: 20px;
+            background: radial-gradient(circle at top right, rgba(255,255,255,0.1), transparent 50%);
+            pointer-events: none;
+        }
+
+        .card.active {
+            transform: scale(1.15) translateY(-10px);
+            background: rgba(255, 255, 255, 0.08);
+            border-color: var(--primary);
+            box-shadow: 0 25px 50px rgba(0,0,0,0.6), 0 0 30px rgba(0, 255, 136, 0.2);
+            z-index: 10;
+        }
+
+        .card:hover { cursor: pointer; }
+
+        /* --- FOOTER (Controls) --- */
+        footer {
+            padding: 20px 50px; display: flex; justify-content: flex-end;
+            align-items: center; gap: 40px; border-top: 1px solid var(--glass-border);
+            background: rgba(0,0,0,0.3); backdrop-filter: blur(10px);
+        }
+        .control-group { display: flex; align-items: center; gap: 12px; font-size: 0.9rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: 1px;}
+        .key-badge {
+            background: #334155; color: white; min-width: 30px; height: 30px;
+            padding: 0 10px; border-radius: 6px; display: flex;
+            justify-content: center; align-items: center; font-weight: 900;
+            box-shadow: 0 4px 0 #0f172a, 0 5px 10px rgba(0,0,0,0.5);
+            border: 1px solid #475569;
+        }
+        .key-badge.primary {
+            background: var(--primary); color: #020617;
+            box-shadow: 0 4px 0 #047857, 0 5px 10px rgba(0,255,136,0.3);
+            border-color: #34d399;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="splash-screen" onclick="initSystem()">
+        <div class="pulse-text">INICIAR SISTEMA AR</div>
+    </div>
+
+    <header>
+        <div class="sys-tray-left">
+            <div class="avatar-ring"><div class="avatar-inner">🤖</div></div>
+            <span class="sys-title">Hub Interactivo V2</span>
+        </div>
+        <div class="sys-tray-right">
+            <div class="sys-icons"><span>🌐</span><span>🔋</span></div>
+            <span id="date-display">--/--/----</span>
+            <span id="clock" style="color: var(--text-main); font-weight: 700;">00:00</span>
+        </div>
+    </header>
+
+    <main>
+        <div class="meta-info">
+            <h1 id="app-title">Cargando Motores...</h1>
+            <div id="app-desc">--</div>
+        </div>
+
+        <div class="carousel" id="carousel"></div>
+    </main>
+
+    <footer>
+        <div class="control-group"><div class="key-badge">⬅ ➡</div> Navegar</div>
+        <div class="control-group"><div class="key-badge primary">ENTER</div> Iniciar</div>
+    </footer>
+
+    <script>
+        // --- BASE DE DATOS DE APLICACIONES ---
+        const apps = [
+            { id: 1, title: 'Pizarra Virtual', desc: 'Lienzo Gestual IA', icon: '🎨', file: 'Pizarra.html' },
+            { id: 2, title: 'Sintetizador', desc: 'Secuenciador MIDI', icon: '🎹', file: 'Piano.html' },
+            { id: 3, title: 'Burbujas AR', desc: 'Motor Físico & Colisiones', icon: '🫧', file: 'Juego Burbujas.html' },
+            { id: 4, title: 'Catálogo PRO', desc: 'E-Commerce Sin Contacto', icon: '🛒', file: 'Menu Interactivo.html' },
+            { id: 5, title: 'Probador 3D', desc: 'Mapeo Facial (FaceMesh)', icon: '👓', file: 'Provador virtual.html' }
+        ];
+
+        let currentIndex = 0;
+        let audioCtx = null;
+        let systemReady = false;
+        const carousel = document.getElementById('carousel');
+        const titleEl = document.getElementById('app-title');
+        const descEl = document.getElementById('app-desc');
+
+        // --- SISTEMA DE AUDIO SINTÉTICO ---
+        function initAudio() {
+            if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            if (audioCtx.state === 'suspended') audioCtx.resume();
+        }
+
+        function playTone(freq, type, duration, vol = 0.1) {
+            if (!audioCtx) return;
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.type = type;
+            osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+            
+            gain.gain.setValueAtTime(vol, audioCtx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+            
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+            osc.start();
+            osc.stop(audioCtx.currentTime + duration);
+        }
+
+        function playNavSound() { playTone(400, 'sine', 0.1, 0.05); }
+        function playSelectSound() { playTone(800, 'triangle', 0.15, 0.1); setTimeout(() => playTone(1200, 'sine', 0.3, 0.1), 100); }
+
+        // --- INICIAR SISTEMA (Quitar Splash Screen) ---
+        function initSystem() {
+            if(systemReady) return;
+            initAudio();
+            document.getElementById('splash-screen').style.opacity = '0';
+            setTimeout(() => document.getElementById('splash-screen').style.visibility = 'hidden', 500);
+            playSelectSound();
+            systemReady = true;
+        }
+
+        // --- RENDERIZADO DEL CARRUSEL ---
+        function renderCards() {
+            apps.forEach((app, index) => {
+                const card = document.createElement('a');
+                card.className = 'card';
+                card.href = app.file; 
+                card.innerHTML = app.icon;
+                
+                card.addEventListener('mouseenter', () => {
+                    if (systemReady && currentIndex !== index) playNavSound();
+                    setFocus(index);
+                });
+                
+                // Interceptar clic para sonido antes de navegar
+                card.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    launchApp(index);
+                });
+
+                carousel.appendChild(card);
+            });
+            setFocus(0);
+        }
+
+        // --- MANEJO DE SELECCIÓN ---
+        function setFocus(index) {
+            if (index < 0 || index >= apps.length) return;
+            const cards = document.querySelectorAll('.card');
+            cards.forEach(c => c.classList.remove('active'));
+            
+            currentIndex = index;
+            const activeCard = cards[currentIndex];
+            activeCard.classList.add('active');
+            
+            titleEl.innerText = apps[currentIndex].title;
+            descEl.innerText = apps[currentIndex].desc;
+            activeCard.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+        }
+
+        function launchApp(index) {
+            playSelectSound();
+            document.body.style.transition = "opacity 0.5s ease";
+            document.body.style.opacity = "0";
+            setTimeout(() => { window.location.href = apps[index].file; }, 500);
+        }
+
+        // --- CONTROLES POR TECLADO ---
+        window.addEventListener('keydown', (e) => {
+            if(!systemReady && e.key === 'Enter') { initSystem(); return; }
+            if(!systemReady) return;
+
+            if (e.key === 'ArrowRight') {
+                e.preventDefault();
+                if(currentIndex < apps.length - 1) { playNavSound(); setFocus(currentIndex + 1); }
+            } else if (e.key === 'ArrowLeft') {
+                e.preventDefault();
+                if(currentIndex > 0) { playNavSound(); setFocus(currentIndex - 1); }
+            } else if (e.key === 'Enter') {
+                e.preventDefault();
+                launchApp(currentIndex);
+            }
+        });
+
+        // --- RELOJ Y FECHA UI ---
+        function updateTime() {
+            const now = new Date();
+            const hours = now.getHours().toString().padStart(2, '0');
+            const minutes = now.getMinutes().toString().padStart(2, '0');
+            document.getElementById('clock').innerText = `${hours}:${minutes}`;
+            
+            const options = { weekday: 'short', day: 'numeric', month: 'short' };
+            document.getElementById('date-display').innerText = now.toLocaleDateString('es-ES', options).toUpperCase();
+        }
+        setInterval(updateTime, 1000);
+        updateTime();
+
+        // Boot
+        renderCards();
+    </script>
+</body>
+</html>

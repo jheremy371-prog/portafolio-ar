@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pizarra Virtual Pro V6 - Undo/Redo & Save</title>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #111; font-family: 'Segoe UI', sans-serif; user-select: none; }
+        #container { position: relative; width: 100vw; height: 100vh; cursor: none; }
+        
+        #webcam {
+            position: absolute; width: 100%; height: 100%;
+            object-fit: cover; transform: scaleX(-1);
+            opacity: 0.15; z-index: 1; filter: grayscale(100%);
+        }
+        
+        #drawingBoard, #draftBoard { position: absolute; width: 100%; height: 100%; pointer-events: none; }
+        #drawingBoard { z-index: 2; } #draftBoard { z-index: 3; }
+
+        /* HUD Principal */
+        #hud {
+            position: absolute; top: 20px; left: 20px; z-index: 10;
+            background: rgba(0, 0, 0, 0.7); color: #fff;
+            padding: 12px 20px; border-radius: 12px;
+            text-transform: uppercase; letter-spacing: 1px;
+            font-size: 14px; font-weight: bold; border: 1px solid #444;
+            backdrop-filter: blur(8px); transition: all 0.2s;
+        }
+
+        /* Paletas y Barras de Herramientas */
+        .toolbar {
+            position: absolute; z-index: 10; display: flex; gap: 10px;
+            background: rgba(0, 0, 0, 0.7); border: 1px solid #444; backdrop-filter: blur(8px);
+        }
+        
+        #colorPalette { bottom: 30px; left: 50%; transform: translateX(-50%); padding: 12px 25px; border-radius: 30px; }
+        #brushPalette { top: 50%; right: 20px; transform: translateY(-50%); flex-direction: column; padding: 15px 12px; border-radius: 15px; }
+        #toolPalette { top: 50%; left: 20px; transform: translateY(-50%); flex-direction: column; padding: 15px 12px; border-radius: 15px; }
+        
+        /* NUEVO: Barra de Acciones Superior Derecha */
+        #actionBar { top: 20px; right: 20px; padding: 8px 15px; border-radius: 15px; }
+
+        /* Botones Interfaz */
+        .color-btn {
+            width: 30px; height: 30px; border-radius: 50%; cursor: pointer;
+            border: 2px solid transparent; transition: transform 0.2s, box-shadow 0.2s;
+        }
+        .color-btn.active { border-color: #fff; box-shadow: 0 0 12px rgba(255,255,255,0.6); transform: scale(1.1); }
+        .color-btn:hover { transform: scale(1.15); }
+
+        .action-btn {
+            width: 40px; height: 40px; border-radius: 10px; cursor: pointer;
+            display: flex; justify-content: center; align-items: center;
+            font-size: 20px; background: rgba(255,255,255,0.05); color: white;
+            transition: all 0.2s; border: 1px solid transparent;
+        }
+        .action-btn:hover { background: rgba(255,255,255,0.2); transform: translateY(-2px); }
+        .action-btn:active { transform: scale(0.95); }
+        .action-btn.disabled { opacity: 0.3; pointer-events: none; }
+
+        .icon-btn {
+            width: 45px; height: 45px; border-radius: 10px; cursor: pointer;
+            display: flex; justify-content: center; align-items: center;
+            font-size: 22px; background: rgba(255,255,255,0.05);
+            transition: all 0.2s; border: 2px solid transparent;
+        }
+        .icon-btn.active { border-color: #fff; background: rgba(255,255,255,0.25); box-shadow: 0 0 10px rgba(255,255,255,0.3); }
+
+        /* Cursor Persistente Optimizado */
+        #virtualCursor {
+            position: absolute; transform: translate(-50%, -50%);
+            z-index: 20; pointer-events: none; display: flex; 
+            justify-content: center; align-items: center;
+            transition: width 0.15s, height 0.15s, background-color 0.15s, box-shadow 0.15s, opacity 0.2s;
+            border-radius: 50%; border: 2px solid rgba(255,255,255,0.3); background: rgba(255,255,255,0.1);
+        }
+
+        #progressRing { position: absolute; width: 60px; height: 60px; transform: rotate(-90deg); display: none; }
+        #progressRing circle {
+            fill: transparent; stroke: #FFCC00; stroke-width: 4; 
+            stroke-linecap: round; stroke-dasharray: 157; stroke-dashoffset: 157;
+            transition: stroke-dashoffset 0.1s linear;
+        }
+    </style>
+</head>
+<body>
+
+<div id="container">
+    <div id="hud">Iniciando Motor Visual...</div>
+    <video id="webcam" autoplay playsinline></video>
+    
+    <canvas id="drawingBoard"></canvas>
+    <canvas id="draftBoard"></canvas>
+    
+    <div id="actionBar" class="toolbar">
+        <div class="action-btn disabled" id="btnUndo" onclick="undo()" title="Deshacer">↩️</div>
+        <div class="action-btn disabled" id="btnRedo" onclick="redo()" title="Rehacer">↪️</div>
+        <div class="action-btn" onclick="clearCanvasAction()" title="Limpiar Todo">🗑️</div>
+        <div class="action-btn" onclick="saveImage()" title="Guardar PNG">💾</div>
+    </div>
+
+    <div id="toolPalette" class="toolbar">
+        <div class="icon-btn active" onclick="changeTool('pen', this)" title="Dibujo Libre">✏️</div>
+        <div class="icon-btn" onclick="changeTool('line', this)" title="Línea Recta">📏</div>
+        <div class="icon-btn" onclick="changeTool('rect', this)" title="Rectángulo">🔲</div>
+        <div class="icon-btn" onclick="changeTool('circle', this)" title="Círculo">⭕</div>
+    </div>
+    <div id="brushPalette" class="toolbar">
+        <div class="icon-btn active" onclick="changeBrush('normal', this)" title="Normal">🖊️</div>
+        <div class="icon-btn" onclick="changeBrush('neon', this)" title="Neón">✨</div>
+        <div class="icon-btn" onclick="changeBrush('highlighter', this)" title="Resaltador">🖍️</div>
+        <div class="icon-btn" onclick="changeBrush('dashed', this)" title="Punteado">➖</div>
+    </div>
+    <div id="colorPalette" class="toolbar">
+        <div class="color-btn active" style="background: #00FF00;" onclick="changeColor('#00FF00', this)"></div>
+        <div class="color-btn" style="background: #00BFFF;" onclick="changeColor('#00BFFF', this)"></div>
+        <div class="color-btn" style="background: #FF3366;" onclick="changeColor('#FF3366', this)"></div>
+        <div class="color-btn" style="background: #FFCC00;" onclick="changeColor('#FFCC00', this)"></div>
+        <div class="color-btn" style="background: #FFFFFF;" onclick="changeColor('#FFFFFF', this)"></div>
+    </div>
+
+    <div id="virtualCursor">
+        <svg id="progressRing" viewBox="0 0 60 60"><circle cx="30" cy="30" r="25"></circle></svg>
+    </div>
+</div>
+
+<script>
+    // --- SETUP PRINCIPAL ---
+    const videoElement = document.getElementById('webcam');
+    const canvasMain = document.getElementById('drawingBoard'); const ctxMain = canvasMain.getContext('2d', { willReadFrequently: true });
+    const canvasDraft = document.getElementById('draftBoard'); const ctxDraft = canvasDraft.getContext('2d');
+    const hudElement = document.getElementById('hud');
+    const cursorElement = document.getElementById('virtualCursor');
+    const progressCircle = document.querySelector('#progressRing circle');
+    const progressRingSvg = document.getElementById('progressRing');
+
+    // --- SISTEMA DE GESTIÓN DE ESTADOS (UNDO/REDO) ---
+    let undoStack = [];
+    let redoStack = [];
+    
+    function saveState() {
+        undoStack.push(canvasMain.toDataURL());
+        if(undoStack.length > 20) undoStack.shift(); // Límite de 20 pasos de memoria
+        redoStack = []; // Romper la línea temporal futura
+        updateUndoRedoUI();
+    }
+
+    function undo() {
+        if (undoStack.length === 0) return;
+        redoStack.push(canvasMain.toDataURL());
+        let previousState = undoStack.pop();
+        restoreCanvasState(previousState);
+        updateUndoRedoUI();
+    }
+
+    function redo() {
+        if (redoStack.length === 0) return;
+        undoStack.push(canvasMain.toDataURL());
+        let nextState = redoStack.pop();
+        restoreCanvasState(nextState);
+        updateUndoRedoUI();
+    }
+
+    function restoreCanvasState(dataUrl) {
+        let img = new Image();
+        img.src = dataUrl;
+        img.onload = () => {
+            ctxMain.clearRect(0, 0, canvasMain.width, canvasMain.height);
+            ctxMain.drawImage(img, 0, 0);
+        };
+    }
+
+    function updateUndoRedoUI() {
+        document.getElementById('btnUndo').classList.toggle('disabled', undoStack.length === 0);
+        document.getElementById('btnRedo').classList.toggle('disabled', redoStack.length === 0);
+    }
+
+    function clearCanvasAction() {
+        saveState();
+        ctxMain.clearRect(0, 0, canvasMain.width, canvasMain.height);
+    }
+
+    // --- SISTEMA DE EXPORTACIÓN ---
+    function saveImage() {
+        const link = document.createElement('a');
+        link.download = 'Mi_Pizarra_Magica.png';
+        link.href = canvasMain.toDataURL('image/png');
+        link.click();
+        
+        // Feedback visual en el HUD
+        hudElement.innerHTML = "✅ Imagen Guardada";
+        hudElement.style.color = "#00FF00";
+        setTimeout(() => { hudElement.innerHTML = "🖐️ Puntero"; hudElement.style.color = "#FFF"; }, 2000);
+    }
+
+    // --- LÓGICA DE UI Y HERRAMIENTAS ---
+    let strokeColor = '#00FF00'; let currentBrush = 'normal'; let currentTool = 'pen';
+    function changeColor(color, btn) { strokeColor = color; updateActiveBtn('#colorPalette', btn); }
+    function changeBrush(type, btn) { currentBrush = type; updateActiveBtn('#brushPalette', btn); }
+    function changeTool(type, btn) { currentTool = type; updateActiveBtn('#toolPalette', btn); }
+    function updateActiveBtn(parentId, btnElement) {
+        document.querySelectorAll(`${parentId} .icon-btn, ${parentId} .color-btn`).forEach(b => b.classList.remove('active'));
+        btnElement.classList.add('active');
+    }
+
+    function resizeCanvas() { 
+        let temp = canvasMain.toDataURL(); // Evitar borrar al redimensionar
+        canvasMain.width = canvasDraft.width = window.innerWidth; 
+        canvasMain.height = canvasDraft.height = window.innerHeight; 
+        restoreCanvasState(temp);
+    }
+    window.addEventListener('resize', resizeCanvas); resizeCanvas();
+    setTimeout(saveState, 500); // Guardar estado inicial vacío
+
+    function applyContextStyles(ctx) {
+        ctx.globalCompositeOperation = 'source-over'; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.strokeStyle = strokeColor;
+        if (currentBrush === 'normal') { ctx.lineWidth = 6; ctx.shadowBlur = 0; ctx.setLineDash([]); ctx.globalAlpha = 1.0; } 
+        else if (currentBrush === 'neon') { ctx.lineWidth = 6; ctx.shadowBlur = 20; ctx.shadowColor = strokeColor; ctx.setLineDash([]); ctx.globalAlpha = 1.0; } 
+        else if (currentBrush === 'highlighter') { ctx.lineWidth = 30; ctx.shadowBlur = 0; ctx.setLineDash([]); ctx.globalAlpha = 0.3; } 
+        else if (currentBrush === 'dashed') { ctx.lineWidth = 6; ctx.shadowBlur = 0; ctx.setLineDash([15, 15]); ctx.globalAlpha = 1.0; }
+    }
+
+    // --- VARIABLES DEL MOTOR FÍSICO ---
+    let currentX = window.innerWidth / 2, currentY = window.innerHeight / 2;
+    let lastX = null, lastY = null;
+    const ALPHA = 0.35; 
+    let clearTimerStart = null;
+    let isDrawingShape = false; let startShapeX = 0, startShapeY = 0;
+    let isCurrentlyDrawing = false; // Bandera para saber cuándo guardamos el estado
+
+    function updateCursorPosition() {
+        cursorElement.style.left = currentX + 'px';
+        cursorElement.style.top = currentY + 'px';
+    }
+    updateCursorPosition();
+
+    // --- INTEGRACIÓN MEDIAPIPE ---
+    const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
+    hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.75, minTrackingConfidence: 0.75 });
+    hands.onResults(onResults);
+
+    function onResults(results) {
+        cursorElement.style.opacity = '1';
+        progressRingSvg.style.display = 'none';
+
+        if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+            const landmarks = results.multiHandLandmarks[0];
+            const indexTip = landmarks[8]; const indexPip = landmarks[6]; const thumbTip = landmarks[4];
+            
+            const MARGIN = 0.15; 
+            let mappedX = ((1.0 - indexTip.x) - MARGIN) / (1.0 - 2 * MARGIN);
+            let mappedY = (indexTip.y - MARGIN) / (1.0 - 2 * MARGIN);
+            const targetX = Math.max(0, Math.min(1, mappedX)) * canvasMain.width;
+            const targetY = Math.max(0, Math.min(1, mappedY)) * canvasMain.height;
+
+            currentX += ALPHA * (targetX - currentX); currentY += ALPHA * (targetY - currentY);
+
+            const pinchDist = Math.hypot(indexTip.x - thumbTip.x, indexTip.y - thumbTip.y);
+            const isIndexUp = indexTip.y < indexPip.y;
+            const areOtherFingersDown = (landmarks[12].y > landmarks[10].y) && (landmarks[16].y > landmarks[14].y) && (landmarks[20].y > landmarks[18].y);
+            const isHandOpen = (landmarks[12].y < landmarks[10].y) && (landmarks[16].y < landmarks[14].y) && (landmarks[20].y < landmarks[18].y);
+            const isFist = !isIndexUp && !isHandOpen;
+
+            // EVALUACIÓN DE COMMIT (Guardar estado en UNDO/REDO al terminar de dibujar)
+            if (isDrawingShape && !(isIndexUp && areOtherFingersDown)) {
+                saveState(); // Guardamos justo ANTES de estampar la forma
+                applyContextStyles(ctxMain); ctxMain.beginPath();
+                if (currentTool === 'line') { ctxMain.moveTo(startShapeX, startShapeY); ctxMain.lineTo(currentX, currentY); } 
+                else if (currentTool === 'rect') { ctxMain.rect(startShapeX, startShapeY, currentX - startShapeX, currentY - startShapeY); } 
+                else if (currentTool === 'circle') { ctxMain.arc(startShapeX, startShapeY, Math.hypot(currentX - startShapeX, currentY - startShapeY), 0, Math.PI * 2); }
+                ctxMain.stroke(); ctxDraft.clearRect(0, 0, canvasDraft.width, canvasDraft.height); 
+                isDrawingShape = false;
+            }
+
+            if (isCurrentlyDrawing && !(isIndexUp && areOtherFingersDown) && pinchDist >= 0.05) {
+                // El usuario soltó el lápiz libre o el borrador
+                saveState();
+                isCurrentlyDrawing = false;
+            }
+
+            // GESTO 1: PUÑO (Limpiar)
+            if (isFist) {
+                hudElement.innerHTML = "✋ Limpiando..."; hudElement.style.color = "#FFCC00";
+                Object.assign(cursorElement.style, { width: '10px', height: '10px', background: 'transparent', border: 'none', boxShadow: 'none' });
+                progressRingSvg.style.display = 'block';
+
+                if (!clearTimerStart) clearTimerStart = Date.now();
+                let elapsed = Date.now() - clearTimerStart;
+                progressCircle.style.strokeDashoffset = Math.max(0, 157 - (elapsed / 2000) * 157);
+
+                if (elapsed >= 2000) { clearCanvasAction(); clearTimerStart = Date.now(); }
+                lastX = null; lastY = null;
+            } 
+            // GESTO 2: MANO ABIERTA (Navegación)
+            else if (isHandOpen) {
+                hudElement.innerHTML = "🖐️ Puntero"; hudElement.style.color = "#FFF";
+                Object.assign(cursorElement.style, { width: '20px', height: '20px', border: '2px solid rgba(255,255,255,0.8)', background: 'rgba(255,255,255,0.2)', boxShadow: 'none' });
+                clearTimerStart = null; lastX = null; lastY = null; 
+            }
+            // GESTO 3: PINZA (Borrador)
+            else if (pinchDist < 0.05) {
+                if (!isCurrentlyDrawing) isCurrentlyDrawing = true;
+                hudElement.innerHTML = "🧹 Borrador Activo"; hudElement.style.color = "#FF3366";
+                Object.assign(cursorElement.style, { width: '60px', height: '60px', border: '2px solid #FF3366', background: 'rgba(255, 51, 102, 0.2)', boxShadow: 'none' });
+                clearTimerStart = null;
+                
+                ctxMain.shadowBlur = 0; ctxMain.setLineDash([]); ctxMain.globalAlpha = 1.0; ctxMain.globalCompositeOperation = 'destination-out';
+                ctxMain.lineWidth = 60; ctxMain.lineCap = 'round'; ctxMain.lineJoin = 'round';
+                
+                if (lastX && lastY) { ctxMain.beginPath(); ctxMain.moveTo(lastX, lastY); ctxMain.lineTo(currentX, currentY); ctxMain.stroke(); }
+                lastX = currentX; lastY = currentY;
+            }
+            // GESTO 4: DIBUJAR (Solo Índice)
+            else if (isIndexUp && areOtherFingersDown) {
+                hudElement.innerHTML = currentTool === 'pen' ? "✏️ Dibujando Libre" : "📐 Dibujando Forma"; hudElement.style.color = strokeColor;
+                Object.assign(cursorElement.style, { width: '12px', height: '12px', background: strokeColor, boxShadow: `0 0 10px ${strokeColor}`, border: 'none' });
+                clearTimerStart = null;
+                
+                if (currentTool === 'pen') {
+                    if (!isCurrentlyDrawing) isCurrentlyDrawing = true;
+                    applyContextStyles(ctxMain);
+                    if (lastX && lastY) { ctxMain.beginPath(); ctxMain.moveTo(lastX, lastY); ctxMain.lineTo(currentX, currentY); ctxMain.stroke(); }
+                    lastX = currentX; lastY = currentY;
+                } else {
+                    if (!isDrawingShape) { isDrawingShape = true; startShapeX = currentX; startShapeY = currentY; }
+                    ctxDraft.clearRect(0, 0, canvasDraft.width, canvasDraft.height);
+                    applyContextStyles(ctxDraft); ctxDraft.beginPath();
+                    if (currentTool === 'line') { ctxDraft.moveTo(startShapeX, startShapeY); ctxDraft.lineTo(currentX, currentY); } 
+                    else if (currentTool === 'rect') { ctxDraft.rect(startShapeX, startShapeY, currentX - startShapeX, currentY - startShapeY); } 
+                    else if (currentTool === 'circle') { ctxDraft.arc(startShapeX, startShapeY, Math.hypot(currentX - startShapeX, currentY - startShapeY), 0, Math.PI * 2); }
+                    ctxDraft.stroke();
+                }
+            } else {
+                hudElement.innerHTML = "Mano Detectada - Acomoda"; hudElement.style.color = "#888";
+                Object.assign(cursorElement.style, { width: '20px', height: '20px', border: '2px solid rgba(255,255,255,0.4)', background: 'rgba(255,255,255,0.1)', boxShadow: 'none' });
+                lastX = null; lastY = null;
+            }
+        } else {
+            hudElement.innerHTML = "🔍 Buscando Mano..."; hudElement.style.color = "#888";
+            Object.assign(cursorElement.style, { width: '15px', height: '15px', border: '2px solid rgba(255,255,255,0.2)', background: 'transparent', boxShadow: 'none', opacity: '0.5' });
+            lastX = null; lastY = null; clearTimerStart = null;
+        }
+
+        updateCursorPosition();
+    }
+
+    const camera = new Camera(videoElement, { onFrame: async () => { await hands.send({image: videoElement}); }, width: 1280, height: 720 });
+    camera.start();
+</script>
+
+</body>
+</html>
